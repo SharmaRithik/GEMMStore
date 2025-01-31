@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGPU Matrix Multiplication - CUDA Match (Optimized)</title>
+    <style>
+        #output { 
+            font-family: monospace; 
+            white-space: pre; 
+            margin: 20px; 
+            font-size: 14px;
+        }
+        .correct { color: green; }
+        .incorrect { color: red; }
+        .performance { 
+            margin-top: 20px;
+            font-weight: bold;
+            color: #0066cc;
+        }
+        .stats {
+            margin-top: 10px;
+            color: #666;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .gflops {
+            color: #0066cc;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebGPU Matrix Multiplication - CUDA Match (Optimized) with Iterations</h1>
+    <div id="output"></div>
+    <script type="text/javascript">
+        const MATRIX_SIZE = 4096;
+        // Fixed parameters as in CUDA
+        const BK = 8;
+        const TM = 8;
+        const TN = 8;
+        const NUM_ITERATIONS = 16;  // Number of benchmark iterations
+        const WARMUP_ITERATIONS = 5; // Number of warmup iterations
+
+        // Block size selection function matching CUDA launcher
+        function getBlockDimensions(M, N) {
+            if (M >= 128 && N >= 128) {
+                return { BM: 128, BN: 128 };
+            } else {
+                return { BM: 64, BN: 64 };
+            }
+        }
+
+        function calculateGFLOPs(M, N, K, timeInMs) {
+            const operations = 2n * BigInt(M) * BigInt(N) * BigInt(K);
+            const timeInSeconds = timeInMs / 1000;
+            const gflops = Number(operations) / (timeInSeconds * 1e9);
+            return gflops;
+        }
+
+        function generateRandomMatrix(size) {
+            const matrix = new Float32Array(size * size);
+            for (let i = 0; i < matrix.length; i++) {
+                matrix[i] = Math.random() * 2 - 1;
+            }
+            return matrix;
+        }
+
+        function getCPUResult(firstMatrix, secondMatrix, M, N, K, row, col) {
+            let sum = 0;
+            for (let k = 0; k < K; k++) {
+                sum += firstMatrix[row * K + k] * secondMatrix[k * N + col];
+            }
+            return sum;
+        }
+
+        function verifyResults(firstMatrix, secondMatrix, gpuResult, M, N, K) {
+            const results = [];
+            const numChecks = 50;
+            
+            const positions = new Set();
+            while(positions.size < numChecks) {
+                const row = Math.floor(Math.random() * M);
+                const col = Math.floor(Math.random() * N);
+                positions.add(`${row},${col}`);
+            }
+            
+            for(const pos of positions) {
+                const [row, col] = pos.split(',').map(Number);
+                const cpuResult = getCPUResult(firstMatrix, secondMatrix, M, N, K, row, col);
+                const gpuResultVal = gpuResult[row * N + col];
+                const diff = Math.abs(cpuResult - gpuResultVal);
+                const isCorrect = diff < 0.01;
+                
+                results.push({
+                    row,
+                    col,
+                    cpuResult,
+                    gpuResult: gpuResultVal,
+                    isCorrect,
+                    diff
+                });
+            }
+            return results;
+        }
+
+        async function runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY) {
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY, 1);
+            passEncoder.end();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+        }
+
+        async function init() {
+            const output = document.getElementById('output');
+            
+            if (!navigator.gpu) {
+                output.textContent = 'WebGPU not supported! Please use a WebGPU-enabled browser.';
+                return;
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                output.textContent = 'Failed to get GPU adapter.';
+                return;
+            }
+            const device = await adapter.requestDevice();
+
+            // Your existing shader module code remains exactly the same
+            const shaderModule = device.createShaderModule({
+                code: `
+                    struct Matrix {
+                        size : vec2u,
+                        numbers: array<f32>,
+                    }
+                    
+                    struct Uniforms {
+                        M : u32,
+                        N : u32,
+                        K : u32,
+                        alpha : f32,
+                        beta : f32,
+                        BM : u32,
+                        BN : u32,
+                    }
+                    
+                    @group(0) @binding(0) var<storage, read> A : Matrix;
+                    @group(0) @binding(1) var<storage, read> B : Matrix;
+                    @group(0) @binding(2) var<storage, read_write> C : Matrix;
+                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+                    const BK = 8u;
+                    const TM = 8u;
+                    const TN = 8u;
+
+                    var<workgroup> As: array<f32, 128 * 8>;  // BM * BK max size
+                    var<workgroup> Bs: array<f32, 8 * 128>;  // BK * BN max size
+
+                    @compute @workgroup_size(256, 1, 1)
+                    fn main(
+                        @builtin(workgroup_id) blockIdx : vec3<u32>,
+                        @builtin(local_invocation_id) threadIdx : vec3<u32>
+                    ) {
+                        let cRow = blockIdx.y;
+                        let cCol = blockIdx.x;
+
+                        let threadCol = threadIdx.x % (uniforms.BN / TN);
+                        let threadRow = threadIdx.x / (uniforms.BN / TN);
+
+                        let innerRowA = threadIdx.x / (BK / 4u);
+                        let innerColA = threadIdx.x % (BK / 4u);
+                        let innerRowB = threadIdx.x / (uniforms.BN / 4u);
+                        let innerColB = threadIdx.x % (uniforms.BN / 4u);
+
+                        var a_ptr = cRow * uniforms.BM * uniforms.K;
+                        var b_ptr = cCol * uniforms.BN;
+                        var c_ptr = cRow * uniforms.BM * uniforms.N + cCol * uniforms.BN;
+
+                        var threadResults: array<f32, TM * TN>;
+                        var regM: array<f32, TM>;
+                        var regN: array<f32, TN>;
+
+                        for (var i = 0u; i < TM * TN; i = i + 1u) {
+                            threadResults[i] = 0.0;
+                        }
+
+                        for (var bkIdx = 0u; bkIdx < uniforms.K; bkIdx = bkIdx + BK) {
+                            let loadA_idx = a_ptr + innerRowA * uniforms.K + innerColA * 4u;
+                            let tmpA = vec4<f32>(
+                                A.numbers[loadA_idx],
+                                A.numbers[loadA_idx + 1u],
+                                A.numbers[loadA_idx + 2u],
+                                A.numbers[loadA_idx + 3u]
+                            );
+
+                            let as_offset = innerRowA;
+                            As[(innerColA * 4u) * uniforms.BM + as_offset] = tmpA.x;
+                            As[(innerColA * 4u + 1u) * uniforms.BM + as_offset] = tmpA.y;
+                            As[(innerColA * 4u + 2u) * uniforms.BM + as_offset] = tmpA.z;
+                            As[(innerColA * 4u + 3u) * uniforms.BM + as_offset] = tmpA.w;
+
+                            let loadB_idx = b_ptr + innerRowB * uniforms.N + innerColB * 4u;
+                            let tmpB = vec4<f32>(
+                                B.numbers[loadB_idx],
+                                B.numbers[loadB_idx + 1u],
+                                B.numbers[loadB_idx + 2u],
+                                B.numbers[loadB_idx + 3u]
+                            );
+
+                            let bs_offset = innerRowB * uniforms.BN + innerColB * 4u;
+                            Bs[bs_offset] = tmpB.x;
+                            Bs[bs_offset + 1u] = tmpB.y;
+                            Bs[bs_offset + 2u] = tmpB.z;
+                            Bs[bs_offset + 3u] = tmpB.w;
+
+                            workgroupBarrier();
+
+                            a_ptr = a_ptr + BK;
+                            b_ptr = b_ptr + BK * uniforms.N;
+
+                            for (var dotIdx = 0u; dotIdx < BK; dotIdx = dotIdx + 1u) {
+                                let as_row_offset = dotIdx * uniforms.BM + threadRow * TM;
+                                let bs_row_offset = dotIdx * uniforms.BN + threadCol * TN;
+
+                                regM[0] = As[as_row_offset];
+                                regM[1] = As[as_row_offset + 1u];
+                                regM[2] = As[as_row_offset + 2u];
+                                regM[3] = As[as_row_offset + 3u];
+                                regM[4] = As[as_row_offset + 4u];
+                                regM[5] = As[as_row_offset + 5u];
+                                regM[6] = As[as_row_offset + 6u];
+                                regM[7] = As[as_row_offset + 7u];
+
+                                regN[0] = Bs[bs_row_offset];
+                                regN[1] = Bs[bs_row_offset + 1u];
+                                regN[2] = Bs[bs_row_offset + 2u];
+                                regN[3] = Bs[bs_row_offset + 3u];
+                                regN[4] = Bs[bs_row_offset + 4u];
+                                regN[5] = Bs[bs_row_offset + 5u];
+                                regN[6] = Bs[bs_row_offset + 6u];
+                                regN[7] = Bs[bs_row_offset + 7u];
+
+                                for (var resIdxM = 0u; resIdxM < TM; resIdxM = resIdxM + 1u) {
+                                    let reg_m = regM[resIdxM];
+                                    let res_offset = resIdxM * TN;
+                                    threadResults[res_offset + 0u] += reg_m * regN[0];
+                                    threadResults[res_offset + 1u] += reg_m * regN[1];
+                                    threadResults[res_offset + 2u] += reg_m * regN[2];
+                                    threadResults[res_offset + 3u] += reg_m * regN[3];
+                                    threadResults[res_offset + 4u] += reg_m * regN[4];
+                                    threadResults[res_offset + 5u] += reg_m * regN[5];
+                                    threadResults[res_offset + 6u] += reg_m * regN[6];
+                                    threadResults[res_offset + 7u] += reg_m * regN[7];
+                                }
+                            }
+
+                            workgroupBarrier();
+                        }
+
+                        for (var resIdxM = 0u; resIdxM < TM; resIdxM += 1u) {
+                            let c_row = cRow * uniforms.BM + threadRow * TM + resIdxM;
+                            if (c_row >= uniforms.M) { break; }
+
+                            for (var resIdxN = 0u; resIdxN < TN; resIdxN += 4u) {
+                                let c_col = cCol * uniforms.BN + threadCol * TN + resIdxN;
+                                if (c_col >= uniforms.N) { break; }
+
+                                let outputIdx = c_row * uniforms.N + c_col;
+                                let res_offset = resIdxM * TN + resIdxN;
+
+                                let tmp = vec4<f32>(
+                                    threadResults[res_offset],
+                                    threadResults[res_offset + 1u],
+                                    threadResults[res_offset + 2u],
+                                    threadResults[res_offset + 3u]
+                                );
+
+                                var oldValue = vec4<f32>(
+                                    C.numbers[outputIdx],
+                                    C.numbers[outputIdx + 1u],
+                                    C.numbers[outputIdx + 2u],
+                                    C.numbers[outputIdx + 3u]
+                                );
+
+                                let newValue = uniforms.alpha * tmp + uniforms.beta * oldValue;
+
+                                C.numbers[outputIdx] = newValue.x;
+                                C.numbers[outputIdx + 1u] = newValue.y;
+                                C.numbers[outputIdx + 2u] = newValue.z;
+                                C.numbers[outputIdx + 3u] = newValue.w;
+                            }
+                        }
+                    }
+                `
+            });
+
+            output.textContent = 'Generating random matrices...\n';
+            const genStartTime = performance.now();
+
+            const alpha = 1.0;
+            const beta = 0.0;
+            const firstMatrix = generateRandomMatrix(MATRIX_SIZE);
+            const secondMatrix = generateRandomMatrix(MATRIX_SIZE);
+            const resultMatrixBuffer = new Float32Array(MATRIX_SIZE * MATRIX_SIZE);
+
+            const genEndTime = performance.now();
+            output.textContent += `Matrix generation time: ${(genEndTime - genStartTime).toFixed(2)}ms\n`;
+            output.textContent += 'Starting computation...\n';
+
+            const setupStartTime = performance.now();
+
+            // Get block dimensions based on matrix size (matching CUDA launcher)
+            const { BM, BN } = getBlockDimensions(MATRIX_SIZE, MATRIX_SIZE);
+
+	    // Create and initialize GPU buffers
+            const gpuBufferFirstMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: firstMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE, ...firstMatrix]);
+            gpuBufferFirstMatrix.unmap();
+
+            const gpuBufferSecondMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: secondMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE, ...secondMatrix]);
+            gpuBufferSecondMatrix.unmap();
+
+            const gpuBufferResultMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+            new Float32Array(gpuBufferResultMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE]);
+            gpuBufferResultMatrix.unmap();
+
+            // Create uniform buffer with block dimensions
+            const uniformBuffer = device.createBuffer({
+                size: 28, // 7 * 4 bytes (M, N, K, alpha, beta, BM, BN)
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(
+                uniformBuffer,
+                0,
+                new Uint32Array([MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE])
+            );
+            device.queue.writeBuffer(
+                uniformBuffer,
+                12,
+                new Float32Array([alpha, beta])
+            );
+            device.queue.writeBuffer(
+                uniformBuffer,
+                20,
+                new Uint32Array([BM, BN])
+            );
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
+                ]
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: gpuBufferFirstMatrix }},
+                    { binding: 1, resource: { buffer: gpuBufferSecondMatrix }},
+                    { binding: 2, resource: { buffer: gpuBufferResultMatrix }},
+                    { binding: 3, resource: { buffer: uniformBuffer }}
+                ]
+            });
+
+            const pipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout]
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main"
+                }
+            });
+
+            const setupEndTime = performance.now();
+
+            // Calculate grid dimensions exactly as CUDA launcher
+            const gridDimX = Math.ceil(MATRIX_SIZE / BN);
+            const gridDimY = Math.ceil(MATRIX_SIZE / BM);
+
+            // Run warmup iterations
+            output.textContent += `Running ${WARMUP_ITERATIONS} warmup iterations...\n\n`;
+            const warmupDiv = document.createElement('div');
+            warmupDiv.style.fontFamily = 'monospace';
+            warmupDiv.style.color = '#666666';
+            output.appendChild(warmupDiv);
+
+            for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+                const iterStartTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const iterEndTime = performance.now();
+                const iterTime = iterEndTime - iterStartTime;
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Warmup ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+                warmupDiv.appendChild(iterSpan);
+            }
+
+            // Run benchmark iterations
+            output.textContent += `\nRunning ${NUM_ITERATIONS} benchmark iterations...\n\n`;
+            const iterationsDiv = document.createElement('div');
+            iterationsDiv.style.fontFamily = 'monospace';
+            output.appendChild(iterationsDiv);
+
+            const benchmarkTimes = [];
+            for (let i = 0; i < NUM_ITERATIONS; i++) {
+                const iterStartTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const iterEndTime = performance.now();
+                const iterTime = iterEndTime - iterStartTime;
+                benchmarkTimes.push(iterTime);
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Iteration ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+                iterationsDiv.appendChild(iterSpan);
+            }
+
+            // Calculate statistics
+            const avgKernelTime = benchmarkTimes.reduce((a, b) => a + b, 0) / NUM_ITERATIONS;
+            const minKernelTime = Math.min(...benchmarkTimes);
+            const maxKernelTime = Math.max(...benchmarkTimes);
+
+            // Read back results
+            const readbackStartTime = performance.now();
+
+            const gpuReadBuffer = device.createBuffer({
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const readCommandEncoder = device.createCommandEncoder();
+            readCommandEncoder.copyBufferToBuffer(
+                gpuBufferResultMatrix, 0,
+                gpuReadBuffer, 0,
+                resultMatrixBuffer.byteLength + 8
+            );
+
+            device.queue.submit([readCommandEncoder.finish()]);
+
+            await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+            const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
+            
+            const readbackEndTime = performance.now();
+
+            const avgGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, avgKernelTime);
+            const maxGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, minKernelTime);
+            
+            const statsDiv = document.createElement('div');
+            statsDiv.className = 'stats';
+            statsDiv.innerHTML = `
+Configuration:
+• Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}
+• Block Size M/N: ${BM}/${BN}
+• Block Size K: ${BK}
+• Thread Tile Size M/N: ${TM}/${TN}
+• Grid dimensions: ${gridDimX}x${gridDimY}
+• Block dimension: ${(BM * BN) / (TM * TN)} threads
+
+Timing:
+• Matrix generation: ${(genEndTime - genStartTime).toFixed(2)}ms
+• Setup and buffer creation: ${(setupEndTime - setupStartTime).toFixed(2)}ms
+• Average kernel execution: ${avgKernelTime.toFixed(2)}ms
+• Min kernel execution: ${minKernelTime.toFixed(2)}ms
+• Max kernel execution: ${maxKernelTime.toFixed(2)}ms
+• Result readback: ${(readbackEndTime - readbackStartTime).toFixed(2)}ms
+
+Performance:
+• Average performance: ${avgGflops.toFixed(2)} GFLOP/s
+• Peak performance: ${maxGflops.toFixed(2)} GFLOP/s
+• Memory per matrix: ${(MATRIX_SIZE * MATRIX_SIZE * 4 / (1024 * 1024)).toFixed(2)} MB
+`;
+            output.appendChild(statsDiv);
+
+            // Verify results
+            output.textContent += '\nVerifying 50 random positions...\n\n';
+
+            const verificationResults = verifyResults(
+                firstMatrix, 
+                secondMatrix, 
+                result,
+                MATRIX_SIZE,
+                MATRIX_SIZE,
+                MATRIX_SIZE
+            );
+
+            let allCorrect = true;
+            let maxDiff = 0;
+            let avgDiff = 0;
+
+            for (const check of verificationResults) {
+                maxDiff = Math.max(maxDiff, check.diff);
+                avgDiff += check.diff;
+
+                const message = `Position [${check.row},${check.col}]: ` +
+                            `GPU = ${check.gpuResult.toFixed(6)}, ` +
+                            `CPU = ${check.cpuResult.toFixed(6)} ` +
+                            `Diff: ${check.diff.toFixed(6)} ` +
+                            `${check.isCorrect ? '✓' : '✗'}\n`;
+                
+                const span = document.createElement('span');
+                span.textContent = message;
+                span.className = check.isCorrect ? 'correct' : 'incorrect';
+                output.appendChild(span);
+
+                if (!check.isCorrect) allCorrect = false;
+            }
+
+            avgDiff /= verificationResults.length;
+
+            const verificationStatsDiv = document.createElement('div');
+            verificationStatsDiv.className = 'stats';
+            verificationStatsDiv.textContent = `
+Verification Statistics:
+• Positions checked: 50
+• Maximum difference: ${maxDiff.toFixed(6)}
+• Average difference: ${avgDiff.toFixed(6)}
+`;
+            output.appendChild(verificationStatsDiv);
+
+            const summarySpan = document.createElement('span');
+            summarySpan.textContent = `\nOverall Verification: ${allCorrect ? 'PASSED ✓' : 'FAILED ✗'}`;
+            summarySpan.className = allCorrect ? 'correct' : 'incorrect';
+            output.appendChild(summarySpan);
+
+            const perfSpan = document.createElement('div');
+            perfSpan.className = 'performance';
+            perfSpan.textContent = `\nAverage kernel execution time: ${avgKernelTime.toFixed(2)}ms`;
+            output.appendChild(perfSpan);
+
+            // Clean up
+            gpuReadBuffer.unmap();
+        }
+
+        init();
+    </script>
+</body>
+</html>
+
