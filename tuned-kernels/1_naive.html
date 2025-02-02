@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html>
 <head>
@@ -42,16 +41,95 @@
             color: #666;
             font-style: italic;
         }
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .results-table th, .results-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .results-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        .results-table tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        .results-table tr:hover {
+            background-color: #e6f3ff;
+        }
+        .best-result {
+            background-color: #e6f7e6 !important;
+            font-weight: bold;
+        }
+        .warmup-result {
+            color: #666;
+            font-style: italic;
+        }
+        .table-container {
+            margin: 20px;
+            overflow-x: auto;
+        }
+        .status {
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
     <h1>WebGPU Matrix Multiplication - CUDA Naive SGEMM with Rectangular Workgroups</h1>
+    <div class="table-container">
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>Workgroup Size</th>
+                    <th>Grid Dimensions</th>
+                    <th>Avg Time (ms)</th>
+                    <th>Best Time (ms)</th>
+                    <th>Performance (GFLOP/s)</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="results-body">
+            </tbody>
+        </table>
+    </div>
     <div id="output"></div>
     <script type="text/javascript">
         const MATRIX_SIZE = 4096;
         const NUM_ITERATIONS = 16;
         const WARMUP_ITERATIONS = 5;
         const MAX_WORKGROUP_SIZE = 256; // WebGPU limit
+
+        function updateResultsTable(workgroupSize, gridDims, avgTime, bestTime, gflops, status, isBest = false) {
+            const tbody = document.getElementById('results-body');
+            const workgroupId = `${workgroupSize.x}x${workgroupSize.y}`;
+            let row = document.getElementById(`row-${workgroupId}`);
+            
+            if (!row) {
+                // Create new row if it doesn't exist
+                row = document.createElement('tr');
+                row.id = `row-${workgroupId}`;
+                tbody.appendChild(row);
+            }
+
+            if (isBest) {
+                row.className = 'best-result';
+            }
+            
+            row.innerHTML = `
+                <td>${workgroupId}</td>
+                <td>${gridDims.x}x${gridDims.y}</td>
+                <td>${avgTime.toFixed(2)}</td>
+                <td>${bestTime.toFixed(2)}</td>
+                <td>${gflops.toFixed(2)}</td>
+                <td class="status">${status}</td>
+            `;
+        }
 
         function generateWorkgroupSizes() {
             const sizes = [];
@@ -95,7 +173,7 @@
 
         function verifyResults(firstMatrix, secondMatrix, gpuResult, M, N, K) {
             const results = [];
-            const numChecks = 10; // Reduced number of checks for warmup runs
+            const numChecks = 10;
             
             const positions = new Set();
             while(positions.size < numChecks) {
@@ -185,7 +263,7 @@
             secondMatrix,
             workgroupSize,
             resultDiv,
-	    gpuBufferResultMatrix
+            gpuBufferResultMatrix
         ) {
             const gridDimX = Math.ceil(MATRIX_SIZE / workgroupSize.x);
             const gridDimY = Math.ceil(MATRIX_SIZE / workgroupSize.y);
@@ -208,8 +286,29 @@
             warmupDiv.className = 'warmup';
             resultDiv.appendChild(warmupDiv);
 
+            // Initial status update
+            updateResultsTable(
+                workgroupSize,
+                { x: gridDimX, y: gridDimY },
+                0.00,
+                0.00,
+                0.00,
+                'Starting...',
+                false
+            );
+
             // Warmup runs with verification
             for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+                updateResultsTable(
+                    workgroupSize,
+                    { x: gridDimX, y: gridDimY },
+                    0.00,
+                    0.00,
+                    0.00,
+                    `Warmup ${i + 1}/${WARMUP_ITERATIONS}`,
+                    false
+                );
+
                 const startTime = performance.now();
                 await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
                 const endTime = performance.now();
@@ -255,6 +354,16 @@
             resultDiv.textContent += `\nBenchmark runs:\n`;
             
             for (let i = 0; i < NUM_ITERATIONS; i++) {
+                updateResultsTable(
+                    workgroupSize,
+                    { x: gridDimX, y: gridDimY },
+                    0.00,
+                    0.00,
+                    0.00,
+                    `Benchmark ${i + 1}/${NUM_ITERATIONS}`,
+                    false
+                );
+
                 const startTime = performance.now();
                 await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
                 const endTime = performance.now();
@@ -270,8 +379,19 @@
             const minTime = Math.min(...times);
             const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, avgTime);
 
+            // Final update with results
+            updateResultsTable(
+                workgroupSize,
+                { x: gridDimX, y: gridDimY },
+                avgTime,
+                minTime,
+                gflops,
+                'Complete ✓',
+                false
+            );
+
             return {
-                size: workgroupSize,
+		size: workgroupSize,
                 avgTime,
                 minTime,
                 gflops,
@@ -283,7 +403,7 @@
 
         async function init() {
             const output = document.getElementById('output');
-            
+
             if (!navigator.gpu) {
                 output.textContent = 'WebGPU not supported! Please use a WebGPU-enabled browser.';
                 return;
@@ -298,7 +418,7 @@
 
             output.textContent = 'Generating random matrices...\n';
             const genStartTime = performance.now();
-            
+
             const alpha = 1.0;
             const beta = 0.0;
             const firstMatrix = generateRandomMatrix(MATRIX_SIZE);
@@ -346,12 +466,12 @@
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             });
             device.queue.writeBuffer(
-                uniformBuffer, 
-                0, 
+                uniformBuffer,
+                0,
                 new Uint32Array([MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE])
             );
             device.queue.writeBuffer(
-                uniformBuffer, 
+                uniformBuffer,
                 12,
                 new Float32Array([alpha, beta])
             );
@@ -359,7 +479,7 @@
             const bindGroupLayout = device.createBindGroupLayout({
                 entries: [
                     { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
-		    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
                     { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
                     { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
                 ]
@@ -378,24 +498,24 @@
             const workgroupDiv = document.createElement('div');
             workgroupDiv.textContent = '\nTesting different workgroup sizes:\n';
             output.appendChild(workgroupDiv);
-            
+
             const results = [];
             for (const size of workgroupSizes) {
                 const resultDiv = document.createElement('div');
                 resultDiv.className = 'workgroup-result';
                 output.appendChild(resultDiv);
-                
+
                 resultDiv.textContent = `Testing ${size.x}x${size.y} workgroup size:\n`;
-                
+
                 const result = await testWorkgroupConfiguration(
-                    device, 
-                    bindGroupLayout, 
+                    device,
+                    bindGroupLayout,
                     bindGroup,
                     firstMatrix,
                     secondMatrix,
                     size,
                     resultDiv,
-		    gpuBufferResultMatrix
+                    gpuBufferResultMatrix
                 );
 
                 resultDiv.textContent += `
@@ -408,12 +528,23 @@
             }
 
             // Find and mark best result
-            const bestResult = results.reduce((best, current) => 
+            const bestResult = results.reduce((best, current) =>
                 current.gflops > best.gflops ? current : best
             );
-            
+
             bestResult.resultDiv.className += ' best-workgroup';
             bestResult.resultDiv.textContent = ' BEST CONFIGURATION\n' + bestResult.resultDiv.textContent;
+
+            // Update table to mark best result
+            updateResultsTable(
+                bestResult.size,
+                { x: bestResult.gridDimX, y: bestResult.gridDimY },
+                bestResult.avgTime,
+                bestResult.minTime,
+                bestResult.gflops,
+                ' BEST',
+                true
+            );
 
             const summaryDiv = document.createElement('div');
             summaryDiv.className = 'stats';
