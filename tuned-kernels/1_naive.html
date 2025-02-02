@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -37,24 +38,35 @@
             background-color: #e6f3ff;
             border-left: 3px solid #00cc00;
         }
+        .warmup {
+            color: #666;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
-    <h1>WebGPU Matrix Multiplication - CUDA Naive SGEMM with Workgroup Analysis</h1>
+    <h1>WebGPU Matrix Multiplication - CUDA Naive SGEMM with Rectangular Workgroups</h1>
     <div id="output"></div>
     <script type="text/javascript">
         const MATRIX_SIZE = 4096;
         const NUM_ITERATIONS = 16;
         const WARMUP_ITERATIONS = 5;
+        const MAX_WORKGROUP_SIZE = 256; // WebGPU limit
 
         function generateWorkgroupSizes() {
             const sizes = [];
-            for (let n = 0; n <= 8; n++) {
-                const size = Math.pow(2, n);
-                if (size * size <= 256) {
-                    sizes.push(size);
+            const powerOfTwo = Array.from({length: 9}, (_, i) => Math.pow(2, i)); // 1 to 256
+
+            for (const x of powerOfTwo) {
+                for (const y of powerOfTwo) {
+                    if (x * y <= MAX_WORKGROUP_SIZE) {
+                        sizes.push({x, y});
+                    }
                 }
             }
+
+            // Sort by total threads for nicer output
+            sizes.sort((a, b) => (a.x * a.y) - (b.x * b.y));
             return sizes;
         }
 
@@ -83,7 +95,7 @@
 
         function verifyResults(firstMatrix, secondMatrix, gpuResult, M, N, K) {
             const results = [];
-            const numChecks = 50;
+            const numChecks = 10; // Reduced number of checks for warmup runs
             
             const positions = new Set();
             while(positions.size < numChecks) {
@@ -112,7 +124,7 @@
             return results;
         }
 
-        function createShaderModule(device, workgroupSize) {
+        function createShaderModule(device, workgroupSizeX, workgroupSizeY) {
             return device.createShaderModule({
                 code: `
                     struct Matrix {
@@ -133,13 +145,13 @@
                     @group(0) @binding(2) var<storage, read_write> C : Matrix;
                     @group(0) @binding(3) var<uniform> uniforms : Uniforms;
                     
-                    @compute @workgroup_size(${workgroupSize}, ${workgroupSize})
+                    @compute @workgroup_size(${workgroupSizeX}, ${workgroupSizeY})
                     fn main(
                         @builtin(workgroup_id) blockIdx : vec3<u32>,
                         @builtin(local_invocation_id) threadIdx : vec3<u32>
                     ) {
-                        let x = blockIdx.x * ${workgroupSize}u + threadIdx.x;
-                        let y = blockIdx.y * ${workgroupSize}u + threadIdx.y;
+                        let x = blockIdx.x * ${workgroupSizeX}u + threadIdx.x;
+                        let y = blockIdx.y * ${workgroupSizeY}u + threadIdx.y;
                     
                         if (x < uniforms.M && y < uniforms.N) {
                             var tmp: f32 = 0.0;
@@ -165,100 +177,107 @@
             await device.queue.onSubmittedWorkDone();
         }
 
-        async function testWorkgroupSizes(device, bindGroupLayout, bindGroup, firstMatrix, secondMatrix) {
-            const output = document.getElementById('output');
-            const workgroupSizes = generateWorkgroupSizes();
+        async function testWorkgroupConfiguration(
+            device, 
+            bindGroupLayout, 
+            bindGroup, 
+            firstMatrix, 
+            secondMatrix,
+            workgroupSize,
+            resultDiv,
+	    gpuBufferResultMatrix
+        ) {
+            const gridDimX = Math.ceil(MATRIX_SIZE / workgroupSize.x);
+            const gridDimY = Math.ceil(MATRIX_SIZE / workgroupSize.y);
             
-            const workgroupDiv = document.createElement('div');
-            workgroupDiv.textContent = '\nTesting different workgroup sizes:\n';
-            output.appendChild(workgroupDiv);
-            
-            const results = [];
-            for (const size of workgroupSizes) {
-                const resultDiv = document.createElement('div');
-                resultDiv.className = 'workgroup-result';
-                output.appendChild(resultDiv);
-                
-                resultDiv.textContent = `Testing ${size}x${size} workgroup size:\n`;
-                
-                const gridDimX = Math.ceil(MATRIX_SIZE / size);
-                const gridDimY = Math.ceil(MATRIX_SIZE / size);
-                
-                const shaderModule = createShaderModule(device, size);
-                
-                const pipelineLayout = device.createPipelineLayout({
-                    bindGroupLayouts: [bindGroupLayout]
-                });
-
-                const computePipeline = device.createComputePipeline({
-                    layout: pipelineLayout,
-                    compute: {
-                        module: shaderModule,
-                        entryPoint: "main"
-                    }
-                });
-
-                // Warmup runs
-                for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-                    await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
-                }
-
-                // Benchmark runs
-                const times = [];
-                for (let i = 0; i < NUM_ITERATIONS; i++) {
-                    const startTime = performance.now();
-                    await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
-                    const endTime = performance.now();
-                    times.push(endTime - startTime);
-                }
-
-                const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
-                const minTime = Math.min(...times);
-                const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, avgTime);
-
-                results.push({ size, avgTime, minTime, gflops, resultDiv });
-                
-                resultDiv.textContent += `
-• Grid dimensions: ${gridDimX}x${gridDimY}
-• Average time: ${avgTime.toFixed(2)}ms
-• Best time: ${minTime.toFixed(2)}ms
-• Performance: ${gflops.toFixed(2)} GFLOP/s
-`;
-            }
-
-            // Find and mark best result
-            const bestResult = results.reduce((best, current) => 
-                current.gflops > best.gflops ? current : best
-            );
-            
-            bestResult.resultDiv.className += ' best-workgroup';
-            bestResult.resultDiv.textContent = '🏆 BEST CONFIGURATION\n' + bestResult.resultDiv.textContent;
-
-            const summaryDiv = document.createElement('div');
-            summaryDiv.className = 'stats';
-            summaryDiv.innerHTML = `
-Workgroup Size Analysis Summary:
-• Best performing workgroup size: ${bestResult.size}x${bestResult.size}
-• Best average time: ${bestResult.avgTime.toFixed(2)}ms
-• Best performance: ${bestResult.gflops.toFixed(2)} GFLOP/s
-`;
-            output.appendChild(summaryDiv);
-
-            // Create pipeline with best workgroup size
-            const bestShaderModule = createShaderModule(device, bestResult.size);
-            const bestPipelineLayout = device.createPipelineLayout({
+            const shaderModule = createShaderModule(device, workgroupSize.x, workgroupSize.y);
+            const pipelineLayout = device.createPipelineLayout({
                 bindGroupLayouts: [bindGroupLayout]
             });
 
+            const computePipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main"
+                }
+            });
+
+            resultDiv.textContent += `\nWarmup runs:\n`;
+            const warmupDiv = document.createElement('div');
+            warmupDiv.className = 'warmup';
+            resultDiv.appendChild(warmupDiv);
+
+            // Warmup runs with verification
+            for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+                const startTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const endTime = performance.now();
+                const iterTime = endTime - startTime;
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                
+                // Read back and verify results
+                const gpuReadBuffer = device.createBuffer({
+                    size: MATRIX_SIZE * MATRIX_SIZE * 4 + 8,
+                    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+                });
+
+                const readCommandEncoder = device.createCommandEncoder();
+                readCommandEncoder.copyBufferToBuffer(
+                    gpuBufferResultMatrix, 0,
+                    gpuReadBuffer, 0,
+                    MATRIX_SIZE * MATRIX_SIZE * 4 + 8
+                );
+
+                device.queue.submit([readCommandEncoder.finish()]);
+                await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+                const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
+                
+                const verificationResults = verifyResults(
+                    firstMatrix, 
+                    secondMatrix, 
+                    result,
+                    MATRIX_SIZE,
+                    MATRIX_SIZE,
+                    MATRIX_SIZE
+                );
+
+                const allCorrect = verificationResults.every(r => r.isCorrect);
+                
+                warmupDiv.textContent += 
+                    `Warmup ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s) - ${allCorrect ? '✓' : '✗'}\n`;
+                
+                gpuReadBuffer.unmap();
+            }
+
+            // Benchmark runs
+            const times = [];
+            resultDiv.textContent += `\nBenchmark runs:\n`;
+            
+            for (let i = 0; i < NUM_ITERATIONS; i++) {
+                const startTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const endTime = performance.now();
+                const iterTime = endTime - startTime;
+                times.push(iterTime);
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                resultDiv.textContent += 
+                    `Iteration ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+            }
+
+            const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+            const minTime = Math.min(...times);
+            const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, avgTime);
+
             return {
-                size: bestResult.size,
-                computePipeline: device.createComputePipeline({
-                    layout: bestPipelineLayout,
-                    compute: {
-                        module: bestShaderModule,
-                        entryPoint: "main"
-                    }
-                })
+                size: workgroupSize,
+                avgTime,
+                minTime,
+                gflops,
+                gridDimX,
+                gridDimY,
+                computePipeline
             };
         }
 
@@ -287,10 +306,15 @@ Workgroup Size Analysis Summary:
             const resultMatrixBuffer = new Float32Array(MATRIX_SIZE * MATRIX_SIZE);
 
             const genEndTime = performance.now();
-            output.textContent += `Matrix generation time: ${(genEndTime - genStartTime).toFixed(2)}ms\n`;
-            output.textContent += 'Starting computation...\n';
+            output.textContent += `Matrix generation time: ${(genEndTime - genStartTime).toFixed(2)}ms\n\n`;
 
-            const setupStartTime = performance.now();
+            // List all workgroup sizes to be tested
+            const workgroupSizes = generateWorkgroupSizes();
+            output.textContent += 'Workgroup sizes to be tested:\n';
+            workgroupSizes.forEach(size => {
+                output.textContent += `${size.x}x${size.y} (${size.x * size.y} threads)\n`;
+            });
+            output.textContent += '\nStarting computation...\n';
 
             // Create and initialize GPU buffers
             const gpuBufferFirstMatrix = device.createBuffer({
@@ -332,11 +356,10 @@ Workgroup Size Analysis Summary:
                 new Float32Array([alpha, beta])
             );
 
-            // Create bind group layout
             const bindGroupLayout = device.createBindGroupLayout({
                 entries: [
                     { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
-                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+		    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
                     { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
                     { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
                 ]
@@ -352,175 +375,66 @@ Workgroup Size Analysis Summary:
                 ]
             });
 
-            const setupEndTime = performance.now();
-
-            // Test different workgroup sizes and get the best configuration
-            const { size: bestWorkgroupSize, computePipeline } = await testWorkgroupSizes(
-                device, 
-                bindGroupLayout,
-                bindGroup, 
-                firstMatrix, 
-                secondMatrix
-            );
-
-            // Calculate grid dimensions based on best workgroup size
-            const gridDimX = Math.ceil(MATRIX_SIZE / bestWorkgroupSize);
-            const gridDimY = Math.ceil(MATRIX_SIZE / bestWorkgroupSize);
-
-            output.textContent += `\nRunning main benchmark with ${bestWorkgroupSize}x${bestWorkgroupSize} workgroups...\n`;
-
-            // Run warmup iterations
-            output.textContent += `Running ${WARMUP_ITERATIONS} warmup iterations...\n\n`;
-            const warmupDiv = document.createElement('div');
-            warmupDiv.style.fontFamily = 'monospace';
-            warmupDiv.style.color = '#666666';
-            output.appendChild(warmupDiv);
-
-            for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-                const iterStartTime = performance.now();
-                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
-                const iterEndTime = performance.now();
-                const iterTime = iterEndTime - iterStartTime;
-                
-                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
-                const iterSpan = document.createElement('div');
-                iterSpan.textContent = `Warmup ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
-                warmupDiv.appendChild(iterSpan);
-            }
-
-            // Run benchmark iterations
-            output.textContent += `\nRunning ${NUM_ITERATIONS} benchmark iterations...\n\n`;
-            const iterationsDiv = document.createElement('div');
-            iterationsDiv.style.fontFamily = 'monospace';
-            output.appendChild(iterationsDiv);
-
-            const benchmarkTimes = [];
-            for (let i = 0; i < NUM_ITERATIONS; i++) {
-                const iterStartTime = performance.now();
-                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
-                const iterEndTime = performance.now();
-                const iterTime = iterEndTime - iterStartTime;
-                benchmarkTimes.push(iterTime);
-                
-                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
-                const iterSpan = document.createElement('div');
-                iterSpan.textContent = `Iteration ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
-                iterationsDiv.appendChild(iterSpan);
-            }
-
-            // Calculate statistics
-            const avgKernelTime = benchmarkTimes.reduce((a, b) => a + b, 0) / NUM_ITERATIONS;
-            const minKernelTime = Math.min(...benchmarkTimes);
-            const maxKernelTime = Math.max(...benchmarkTimes);
-
-            // Read back results
-            const readbackStartTime = performance.now();
-
-            const gpuReadBuffer = device.createBuffer({
-                size: resultMatrixBuffer.byteLength + 8,
-                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-            });
-
-            const readCommandEncoder = device.createCommandEncoder();
-            readCommandEncoder.copyBufferToBuffer(
-                gpuBufferResultMatrix, 0,
-                gpuReadBuffer, 0,
-                resultMatrixBuffer.byteLength + 8
-            );
-
-            device.queue.submit([readCommandEncoder.finish()]);
-
-            await gpuReadBuffer.mapAsync(GPUMapMode.READ);
-            const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
-
-            const readbackEndTime = performance.now();
-
-            const avgGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, avgKernelTime);
-            const maxGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, minKernelTime);
+            const workgroupDiv = document.createElement('div');
+            workgroupDiv.textContent = '\nTesting different workgroup sizes:\n';
+            output.appendChild(workgroupDiv);
             
-            const statsDiv = document.createElement('div');
-            statsDiv.className = 'stats';
-            statsDiv.innerHTML = `
-Configuration:
-• Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}
-• Block Size: ${bestWorkgroupSize}x${bestWorkgroupSize}
-• Grid dimensions: ${gridDimX}x${gridDimY}
-
-Timing:
-• Matrix generation: ${(genEndTime - genStartTime).toFixed(2)}ms
-• Setup and buffer creation: ${(setupEndTime - setupStartTime).toFixed(2)}ms
-• Average kernel execution: ${avgKernelTime.toFixed(2)}ms
-• Min kernel execution: ${minKernelTime.toFixed(2)}ms
-• Max kernel execution: ${maxKernelTime.toFixed(2)}ms
-• Result readback: ${(readbackEndTime - readbackStartTime).toFixed(2)}ms
-
-Performance:
-• Average performance: ${avgGflops.toFixed(2)} GFLOP/s
-• Peak performance: ${maxGflops.toFixed(2)} GFLOP/s
-• Memory per matrix: ${(MATRIX_SIZE * MATRIX_SIZE * 4 / (1024 * 1024)).toFixed(2)} MB
-`;
-            output.appendChild(statsDiv);
-
-            output.textContent += '\nVerifying 50 random positions...\n\n';
-
-            const verificationResults = verifyResults(
-                firstMatrix, 
-                secondMatrix, 
-                result,
-                MATRIX_SIZE,
-                MATRIX_SIZE,
-                MATRIX_SIZE
-            );
-
-            let allCorrect = true;
-            let maxDiff = 0;
-            let avgDiff = 0;
-
-            for (const check of verificationResults) {
-                maxDiff = Math.max(maxDiff, check.diff);
-                avgDiff += check.diff;
-
-                const message = `Position [${check.row},${check.col}]: ` +
-                              `GPU = ${check.gpuResult.toFixed(6)}, ` +
-                              `CPU = ${check.cpuResult.toFixed(6)} ` +
-                              `Diff: ${check.diff.toFixed(6)} ` +
-                              `${check.isCorrect ? '✓' : '✗'}\n`;
+            const results = [];
+            for (const size of workgroupSizes) {
+                const resultDiv = document.createElement('div');
+                resultDiv.className = 'workgroup-result';
+                output.appendChild(resultDiv);
                 
-                const span = document.createElement('span');
-                span.textContent = message;
-                span.className = check.isCorrect ? 'correct' : 'incorrect';
-                output.appendChild(span);
+                resultDiv.textContent = `Testing ${size.x}x${size.y} workgroup size:\n`;
+                
+                const result = await testWorkgroupConfiguration(
+                    device, 
+                    bindGroupLayout, 
+                    bindGroup,
+                    firstMatrix,
+                    secondMatrix,
+                    size,
+                    resultDiv,
+		    gpuBufferResultMatrix
+                );
 
-                if (!check.isCorrect) allCorrect = false;
+                resultDiv.textContent += `
+• Grid dimensions: ${result.gridDimX}x${result.gridDimY}
+• Average time: ${result.avgTime.toFixed(2)}ms
+• Best time: ${result.minTime.toFixed(2)}ms
+• Performance: ${result.gflops.toFixed(2)} GFLOP/s
+`;
+                results.push({ ...result, resultDiv });
             }
 
-            avgDiff /= verificationResults.length;
+            // Find and mark best result
+            const bestResult = results.reduce((best, current) => 
+                current.gflops > best.gflops ? current : best
+            );
+            
+            bestResult.resultDiv.className += ' best-workgroup';
+            bestResult.resultDiv.textContent = ' BEST CONFIGURATION\n' + bestResult.resultDiv.textContent;
 
-            const verificationStatsDiv = document.createElement('div');
-            verificationStatsDiv.className = 'stats';
-            verificationStatsDiv.textContent = `
-Verification Statistics:
-• Positions checked: 50
-• Maximum difference: ${maxDiff.toFixed(6)}
-• Average difference: ${avgDiff.toFixed(6)}
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'stats';
+            summaryDiv.innerHTML = `
+Workgroup Size Analysis Summary:
+• Best performing workgroup size: ${bestResult.size.x}x${bestResult.size.y}
+• Best average time: ${bestResult.avgTime.toFixed(2)}ms
+• Best performance: ${bestResult.gflops.toFixed(2)} GFLOP/s
 `;
-            output.appendChild(verificationStatsDiv);
+            output.appendChild(summaryDiv);
 
-            const summarySpan = document.createElement('span');
-            summarySpan.textContent = `\nOverall Verification: ${allCorrect ? 'PASSED ✓' : 'FAILED ✗'}`;
-            summarySpan.className = allCorrect ? 'correct' : 'incorrect';
-            output.appendChild(summarySpan);
-
-            const perfSpan = document.createElement('div');
-            perfSpan.className = 'performance';
-            perfSpan.textContent = `\nAverage kernel execution time: ${avgKernelTime.toFixed(2)}ms`;
-            output.appendChild(perfSpan);
-
-            // Clean up
-            gpuReadBuffer.unmap();
+            const finalDiv = document.createElement('div');
+            finalDiv.className = 'performance';
+            finalDiv.textContent = `
+Computation complete! Best configuration found: ${bestResult.size.x}x${bestResult.size.y} workgroup size
+with ${bestResult.gflops.toFixed(2)} GFLOP/s performance.`;
+            output.appendChild(finalDiv);
         }
 
         init();
     </script>
 </body>
 </html>
+
