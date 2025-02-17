@@ -1,0 +1,47 @@
+//----------------------------------------
+// Function: rms_norm_kernel
+//----------------------------------------
+@group(0) @binding(0) var<storage, read_write> T_cast : array<f32>;
+@group(0) @binding(1) var<storage, read> input_embeds : array<f32>;
+@group(0) @binding(2) var<storage, read> model_layers_0_input_layernorm_weight4 : array<f32>;
+
+struct PODArgs {
+  batch_size: i32,
+  packGridDimX: u32
+}
+@group(0) @binding(3) var<uniform> podArgs : PODArgs;
+
+var<workgroup> red_buf0 : array<f32, 64>;
+var<workgroup> T_multiply_red_shared : array<f32, 1>;
+@compute @workgroup_size(64, 1, 1)
+fn rms_norm_kernel(
+  @builtin(workgroup_id) blockIdx : vec3<u32>,
+  @builtin(num_workgroups) gridDim : vec3<u32>,
+  @builtin(local_invocation_id) threadIdx : vec3<u32>
+) {
+  if (blockIdx.z * gridDim.x + blockIdx.x > podArgs.packGridDimX) { return; }
+  let v__1 : i32 = i32(blockIdx.z * gridDim.x + blockIdx.x);
+  var T_multiply_red_rf_local : array<f32, 1>;
+  T_multiply_red_rf_local[0i] = 0.000000e+00f;
+  T_multiply_red_rf_local[0i] = fma(input_embeds[((v__1 * 3584i) + i32(threadIdx.x))], input_embeds[((v__1 * 3584i) + i32(threadIdx.x))], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 64i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 64i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 128i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 128i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 192i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 192i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 256i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 256i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 320i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 320i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 384i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 384i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 448i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 448i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 512i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 512i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 576i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 576i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 640i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 640i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 704i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 704i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 768i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 768i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 832i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 832i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 896i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 896i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 960i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 960i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1024i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1024i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1088i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1088i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1152i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1152i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1216i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1216i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1280i)], input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1280i)], T_multiply_red_rf_local[0i]);
+  T_multiply_red_rf_local[0i] = fma(input_embeds[(((v__1 * 3584i) + i32(threadIdx.x)) + 1344

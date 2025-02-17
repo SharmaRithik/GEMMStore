@@ -1,0 +1,28 @@
+//----------------------------------------
+// Function: copy_single_page_kernel
+//----------------------------------------
+@group(0) @binding(0) var<storage, read_write> pages : array<f32>;
+
+struct PODArgs {
+  copy_length: i32,
+  num_pages: i32,
+  page_size: i32,
+  src_page_id: i32,
+  tgt_page_id: i32,
+  packGridDimX: u32
+}
+@group(0) @binding(1) var<uniform> podArgs : PODArgs;
+
+@compute @workgroup_size(256, 1, 1)
+fn copy_single_page_kernel(
+  @builtin(workgroup_id) blockIdx : vec3<u32>,
+  @builtin(num_workgroups) gridDim : vec3<u32>,
+  @builtin(local_invocation_id) threadIdx : vec3<u32>
+) {
+  if (blockIdx.z * gridDim.x + blockIdx.x > podArgs.packGridDimX) { return; }
+  let v__1 : i32 = i32(blockIdx.z * gridDim.x + blockIdx.x);
+  if ((v__1 - (podArgs.copy_length * 2i)) < 0i) {
+    pages[((((select(((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) + (podArgs.copy_length * 128i)), (((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)), ((((podArgs.copy_length * 128i) >= 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) >= 0i)) || (((podArgs.copy_length * 128i) < 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) <= 0i))))>>7u) * 128i) + ((((podArgs.tgt_page_id * 8i) + select(((((v__1 * 256i) + i32(threadIdx.x)) / (podArgs.copy_length * 128i)) - 1i), (((v__1 * 256i) + i32(threadIdx.x)) / (podArgs.copy_length * 128i)), ((((podArgs.copy_length * 128i) >= 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) >= 0i)) || (((podArgs.copy_length * 128i) < 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) <= 0i))))) * podArgs.page_size) * 128i)) + (i32(threadIdx.x) & 127i))] = pages[((((select(((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) + (podArgs.copy_length * 128i)), (((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)), ((((podArgs.copy_length * 128i) >= 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) >= 0i)) || (((podArgs.copy_length * 128i) < 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) <= 0i))))>>7u) * 128i) + ((((podArgs.src_page_id * 8i) + select(((((v__1 * 256i) + i32(threadIdx.x)) / (podArgs.copy_length * 128i)) - 1i), (((v__1 * 256i) + i32(threadIdx.x)) / (podArgs.copy_length * 128i)), ((((podArgs.copy_length * 128i) >= 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) >= 0i)) || (((podArgs.copy_length * 128i) < 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) <= 0i))))) * podArgs.page_size) * 128i)) + (i32(threadIdx.x) & 127i))];
+    pages[((((select(((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) + (podArgs.copy_length * 128i)), (((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)), ((((podArgs.copy_length * 128i) >= 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) >= 0i)) || (((podArgs.copy_length * 128i) < 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) <= 0i))))>>7u) * 128i) + (((((podArgs.tgt_page_id * 8i) + select(((((v__1 * 256i) + i32(threadIdx.x)) / (podArgs.copy_length * 128i)) - 1i), (((v__1 * 256i) + i32(threadIdx.x)) / (podArgs.copy_length * 128i)), ((((podArgs.copy_length * 128i) >= 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) >= 0i)) || (((podArgs.copy_length * 128i) < 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) <= 0i))))) + 4i) * podArgs.page_size) * 128i)) + (i32(threadIdx.x) & 127i))] = pages[((((select(((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) + (podArgs.copy_length * 128i)), (((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)), ((((podArgs.copy_length * 128i) >= 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) >= 0i)) || (((podArgs.copy_length * 128i) < 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) <= 0i))))>>7u) * 128i) + (((((podArgs.src_page_id * 8i) + select(((((v__1 * 256i) + i32(threadIdx.x)) / (podArgs.copy_length * 128i)) - 1i), (((v__1 * 256i) + i32(threadIdx.x)) / (podArgs.copy_length * 128i)), ((((podArgs.copy_length * 128i) >= 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) >= 0i)) || (((podArgs.copy_length * 128i) < 0i) && ((((v__1 * 256i) + i32(threadIdx.x)) % (podArgs.copy_length * 128i)) <= 0i))))) + 4i) * podArgs.page_size) * 128i)) + (i32(threadIdx.x) & 127i))];
+  }
+}
