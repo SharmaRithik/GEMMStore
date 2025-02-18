@@ -1,0 +1,30 @@
+//----------------------------------------
+// Function: tir_kv_cache_debug_get_kv_kernel
+//----------------------------------------
+@group(0) @binding(0) var<storage, read_write> k_data : array<f32>;
+@group(0) @binding(1) var<storage, read> pages : array<f32>;
+@group(0) @binding(2) var<storage, read> position_map : array<i32>;
+@group(0) @binding(3) var<storage, read_write> v_data : array<f32>;
+
+struct PODArgs {
+  layer_id: i32,
+  num_pages: i32,
+  page_size: i32,
+  position_map_elem_offset: i32,
+  seqlen: i32,
+  packGridDimX: u32
+}
+@group(0) @binding(4) var<uniform> podArgs : PODArgs;
+
+@compute @workgroup_size(256, 1, 1)
+fn tir_kv_cache_debug_get_kv_kernel(
+  @builtin(workgroup_id) blockIdx : vec3<u32>,
+  @builtin(num_workgroups) gridDim : vec3<u32>,
+  @builtin(local_invocation_id) threadIdx : vec3<u32>
+) {
+  if (blockIdx.z * gridDim.x + blockIdx.x > podArgs.packGridDimX) { return; }
+  let v__1 : i32 = i32(blockIdx.z * gridDim.x + blockIdx.x);
+  let position : i32 = position_map[((v__1>>1u) + podArgs.position_map_elem_offset)];
+  k_data[((((podArgs.layer_id * podArgs.seqlen) * 512i) + (v__1 * 256i)) + i32(threadIdx.x))] = pages[(((((((((position / podArgs.page_size) + ((position % podArgs.page_size)>>31u)) * 8i) + ((v__1 & 1i) * 2i)) + (i32(threadIdx.x)>>7u)) * podArgs.page_size) * 128i) + (((position % podArgs.page_size) + (podArgs.page_size & ((position % podArgs.page_size)>>31u))) * 128i)) + (i32(threadIdx.x) & 127i))];
+  v_data[((((podArgs.layer_id * podArgs.seqlen) * 512i) + (v__1 * 256i)) + i32(threadIdx.x))] = pages[((((((((((position / podArgs.page_size) + ((position % podArgs.page_size)>>31u)) * 8i) + ((v__1 & 1i) * 2i)) + (i32(threadIdx.x)>>7u)) + 4i) * podArgs.page_size) * 128i) + (((position % podArgs.page_size) + (podArgs.page_size & ((position % podArgs.page_size)>>31u))) * 128i)) + (i32(threadIdx.x) & 127i))];
+}

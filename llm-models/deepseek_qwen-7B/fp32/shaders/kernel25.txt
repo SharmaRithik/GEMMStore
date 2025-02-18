@@ -1,0 +1,71 @@
+//----------------------------------------
+// Function: fused_fused_dequantize4_fused_NT_matmul13_add5_kernel
+//----------------------------------------
+@group(0) @binding(0) var<storage, read_write> T_add : array<f32>;
+@group(0) @binding(1) var<storage, read> lv1362 : array<u32>;
+@group(0) @binding(2) var<storage, read> lv1363 : array<f32>;
+@group(0) @binding(3) var<storage, read> lv1695 : array<f32>;
+@group(0) @binding(4) var<storage, read> lv1696 : array<f32>;
+
+struct PODArgs {
+  packGridDimX: u32
+}
+@group(0) @binding(5) var<uniform> podArgs : PODArgs;
+
+var<workgroup> red_buf0 : array<f32, 64>;
+@compute @workgroup_size(64, 1, 1)
+fn fused_fused_dequantize4_fused_NT_matmul13_add5_kernel(
+  @builtin(workgroup_id) blockIdx : vec3<u32>,
+  @builtin(num_workgroups) gridDim : vec3<u32>,
+  @builtin(local_invocation_id) threadIdx : vec3<u32>
+) {
+  if (blockIdx.z * gridDim.x + blockIdx.x > podArgs.packGridDimX) { return; }
+  let v__1 : i32 = i32(blockIdx.z * gridDim.x + blockIdx.x);
+  var NT_matmul_rf_local : array<f32, 1>;
+  var lv1362_local : array<u32, 1>;
+  var NT_matmul_rf_local_1 : array<f32, 1>;
+  NT_matmul_rf_local[0i] = 0.000000e+00f;
+  for (var ax1_0_fused_ax1_1_fused_0 : i32 = 0; ax1_0_fused_ax1_1_fused_0 < 37i; ax1_0_fused_ax1_1_fused_0++) {
+    lv1362_local[0i] = lv1362[(((v__1 * 2368i) + (ax1_0_fused_ax1_1_fused_0 * 64i)) + i32(threadIdx.x))];
+    NT_matmul_rf_local[0i] = fma(lv1696[((ax1_0_fused_ax1_1_fused_0 * 512i) + (i32(threadIdx.x) * 8i))], ((f32(((lv1362_local[0i]>>0u) & 15u)) - 7.000000e+00f) * lv1363[(((v__1 * 592i) + (ax1_0_fused_ax1_1_fused_0 * 16i)) + (i32(threadIdx.x)>>2u))]), NT_matmul_rf_local[0i]);
+    NT_matmul_rf_local[0i] = fma(lv1696[(((ax1_0_fused_ax1_1_fused_0 * 512i) + (i32(threadIdx.x) * 8i)) + 1i)], ((f32(((lv1362_local[0i]>>4u) & 15u)) - 7.000000e+00f) * lv1363[(((v__1 * 592i) + (ax1_0_fused_ax1_1_fused_0 * 16i)) + (i32(threadIdx.x)>>2u))]), NT_matmul_rf_local[0i]);
+    NT_matmul_rf_local[0i] = fma(lv1696[(((ax1_0_fused_ax1_1_fused_0 * 512i) + (i32(threadIdx.x) * 8i)) + 2i)], ((f32(((lv1362_local[0i]>>8u) & 15u)) - 7.000000e+00f) * lv1363[(((v__1 * 592i) + (ax1_0_fused_ax1_1_fused_0 * 16i)) + (i32(threadIdx.x)>>2u))]), NT_matmul_rf_local[0i]);
+    NT_matmul_rf_local[0i] = fma(lv1696[(((ax1_0_fused_ax1_1_fused_0 * 512i) + (i32(threadIdx.x) * 8i)) + 3i)], ((f32(((lv1362_local[0i]>>12u) & 15u)) - 7.000000e+00f) * lv1363[(((v__1 * 592i) + (ax1_0_fused_ax1_1_fused_0 * 16i)) + (i32(threadIdx.x)>>2u))]), NT_matmul_rf_local[0i]);
+    NT_matmul_rf_local[0i] = fma(lv1696[(((ax1_0_fused_ax1_1_fused_0 * 512i) + (i32(threadIdx.x) * 8i)) + 4i)], ((f32(((lv1362_local[0i]>>16u) & 15u)) - 7.000000e+00f) * lv1363[(((v__1 * 592i) + (ax1_0_fused_ax1_1_fused_0 * 16i)) + (i32(threadIdx.x)>>2u))]), NT_matmul_rf_local[0i]);
+    NT_matmul_rf_local[0i] = fma(lv1696[(((ax1_0_fused_ax1_1_fused_0 * 512i) + (i32(threadIdx.x) * 8i)) + 5i)], ((f32(((lv1362_local[0i]>>20u) & 15u)) - 7.000000e+00f) * lv1363[(((v__1 * 592i) + (ax1_0_fused_ax1_1_fused_0 * 16i)) + (i32(threadIdx.x)>>2u))]), NT_matmul_rf_local[0i]);
+    NT_matmul_rf_local[0i] = fma(lv1696[(((ax1_0_fused_ax1_1_fused_0 * 512i) + (i32(threadIdx.x) * 8i)) + 6i)], ((f32(((lv1362_local[0i]>>24u) & 15u)) - 7.000000e+00f) * lv1363[(((v__1 * 592i) + (ax1_0_fused_ax1_1_fused_0 * 16i)) + (i32(threadIdx.x)>>2u))]), NT_matmul_rf_local[0i]);
+    NT_matmul_rf_local[0i] = fma(lv1696[(((ax1_0_fused_ax1_1_fused_0 * 512i) + (i32(threadIdx.x) * 8i)) + 7i)], ((f32(((lv1362_local[0i]>>28u) & 15u)) - 7.000000e+00f) * lv1363[(((v__1 * 592i) + (ax1_0_fused_ax1_1_fused_0 * 16i)) + (i32(threadIdx.x)>>2u))]), NT_matmul_rf_local[0i]);
+  }
+  NT_matmul_rf_local_1[0i] = 0.000000e+00f;
+  NT_matmul_rf_local_1[0i] = (NT_matmul_rf_local_1[0i] + NT_matmul_rf_local[0i]);
+  workgroupBarrier();
+  red_buf0[i32(threadIdx.x)] = NT_matmul_rf_local_1[0i];
+  workgroupBarrier();
+  if (i32(threadIdx.x) < 32i) {
+    red_buf0[i32(threadIdx.x)] = (red_buf0[i32(threadIdx.x)] + red_buf0[(i32(threadIdx.x) + 32i)]);
+  }
+  workgroupBarrier();
+  if (i32(threadIdx.x) < 16i) {
+    red_buf0[i32(threadIdx.x)] = (red_buf0[i32(threadIdx.x)] + red_buf0[(i32(threadIdx.x) + 16i)]);
+  }
+  workgroupBarrier();
+  if (i32(threadIdx.x) < 8i) {
+    red_buf0[i32(threadIdx.x)] = (red_buf0[i32(threadIdx.x)] + red_buf0[(i32(threadIdx.x) + 8i)]);
+  }
+  workgroupBarrier();
+  if (i32(threadIdx.x) < 4i) {
+    red_buf0[i32(threadIdx.x)] = (red_buf0[i32(threadIdx.x)] + red_buf0[(i32(threadIdx.x) + 4i)]);
+  }
+  workgroupBarrier();
+  if (i32(threadIdx.x) < 2i) {
+    red_buf0[i32(threadIdx.x)] = (red_buf0[i32(threadIdx.x)] + red_buf0[(i32(threadIdx.x) + 2i)]);
+  }
+  workgroupBarrier();
+  if (i32(threadIdx.x) < 1i) {
+    red_buf0[i32(threadIdx.x)] = (red_buf0[i32(threadIdx.x)] + red_buf0[(i32(threadIdx.x) + 1i)]);
+  }
+  workgroupBarrier();
+  if (i32(threadIdx.x) == 0i) {
+    T_add[v__1] = (red_buf0[0i] + lv1695[v__1]);
+  }
+}
