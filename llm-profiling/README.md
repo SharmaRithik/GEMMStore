@@ -1,8 +1,8 @@
-## Profiling Analysis: Llama 3.2 1B q0f16 on Apple M2
+## Profiling Analysis
 
-<small>
-
-### Top 10 Most Time-Consuming Kernels
+```bash
+Profiling Analysis: Llama 3.2 1B q0f16 on Apple M2
+Top 10 Most Time-Consuming Kernels
 
 | Kernel Name                      | Peak Time (ms) |
 |----------------------------------|---------------|
@@ -17,9 +17,7 @@
 | batch_prefill_paged_kv_kernel    | 1.61          |
 | NT_matmul10_kernel               | 0.25          |
 
----
-
-### Kernel Execution Statistics (Sorted by Total Time)
+Kernel Execution Statistics (Sorted by Total Time)
 
 | Kernel Name                            | Total Time (ms) | Iterations | Avg Time (ms) | Peak Time (ms) | % of Total | Cumulative % |
 |----------------------------------------|----------------|------------|--------------|---------------|------------|--------------|
@@ -45,14 +43,11 @@
 | rms_norm2_kernel                       | 0.21           | 8          | 0.03         | 0.03          | 0.01%      | 99.99%       |
 | take1_kernel                           | 0.17           | 12         | 0.01         | 0.04          | 0.01%      | 100.00%      |
 | index_kernel                           | 0.02           | 4          | 0.00         | 0.00          | 0.00%      | 100.00%      |
+```
 
-</small>
-
-## Profiling Analysis: Llama 3.2 1B q4f16_1 on Apple M2
-
-<small>
-
-### Top 10 Most Time-Consuming Kernels
+```bash
+Profiling Analysis: Llama 3.2 1B q4f16_1 on Apple M2
+Top 10 Most Time-Consuming Kernels
 
 Kernel Name                             | Peak_Time_ms   
 ---------------------------------------------------------
@@ -67,9 +62,7 @@ fused_dequantize4_NT_matmul13_kernel    | 0.62
 batch_prefill_paged_kv_kernel           | 1.61           
 batch_decode_paged_kv_kernel            | 0.20  
 
----
-
-### Kernel Execution Statistics (Sorted by Total Time)
+Kernel Execution Statistics (Sorted by Total Time)
 
 Kernel Name                             | Total_Time_ms   | Iterations | Avg_Time_ms     | Peak_Time_ms    | % of Total   | Cumulative %
 ----------------------------------------------------------------------------------------------------------------------------------------
@@ -95,14 +88,11 @@ rms_norm1_kernel                        | 0.23            | 4          | 0.06   
 rms_norm2_kernel                        | 0.22            | 8          | 0.03            | 0.03            | 0.01%        | 99.99%      
 fused_dequantize_take1_kernel           | 0.20            | 12         | 0.02            | 0.05            | 0.01%        | 100.00%     
 index_kernel                            | 0.02            | 4          | 0.00            | 0.01            | 0.00%        | 100.00%
+```
 
-</small>
-
-## Profiling Analysis: Llama 3.2 1B q4f32_1 on Apple M2
-
-<small>
-
-### Top 10 Most Time-Consuming Kernels
+```bash
+Profiling Analysis: Llama 3.2 1B q4f32_1 on Apple M2
+Top 10 Most Time-Consuming Kernels
 
 Kernel Name                                        | Peak_Time_ms   
 --------------------------------------------------------------------
@@ -117,9 +107,7 @@ fused_dequantize4_fused_NT_matmul13_add2_kernel    | 0.53
 batch_prefill_paged_kv_kernel                      | 2.18           
 fused_dequantize1_NT_matmul10_kernel               | 0.21 
 
----
-
-### Kernel Execution Statistics (Sorted by Total Time)
+Kernel Execution Statistics (Sorted by Total Time)
 
 Kernel Name                                        | Total_Time_ms   | Iterations | Avg_Time_ms     | Peak_Time_ms    | % of Total   | Cumulative %
 ---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -144,6 +132,4 @@ fused_split2_silu2_multiply2_kernel                | 0.70            | 124      
 merge_state_inplace_kernel                         | 0.37            | 32         | 0.01            | 0.02            | 0.01%        | 100.00%     
 fused_dequantize_take1_kernel                      | 0.17            | 12         | 0.01            | 0.05            | 0.00%        | 100.00%     
 index_kernel                                       | 0.01            | 4          | 0.00            | 0.00            | 0.00%        | 100.00%  
-
-</small>
-
+```
