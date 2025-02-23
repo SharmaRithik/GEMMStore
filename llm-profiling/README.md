@@ -48,8 +48,6 @@
 
 </small>
 
----
-
 ## Profiling Analysis: Llama 3.2 1B q4f16_1 on Apple M2
 
 <small>
@@ -100,8 +98,6 @@ index_kernel                            | 0.02            | 4          | 0.00   
 
 </small>
 
----
-
 ## Profiling Analysis: Llama 3.2 1B q4f32_1 on Apple M2
 
 <small>
@@ -151,4 +147,3 @@ index_kernel                                       | 0.01            | 4        
 
 </small>
 
----
