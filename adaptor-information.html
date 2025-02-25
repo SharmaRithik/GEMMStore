@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GEMMStore - WebGPU Info</title>
+    <style>
+        body {
+            font-family: monospace;
+            background-color: #f9f9f9;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+        h2 {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-align: left;
+            width: 900px;
+        }
+        hr {
+            width: 900px;
+            margin-bottom: 20px;
+            border: none;
+            border-top: 2px solid #333;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+            max-width: 900px;
+            width: 100%;
+        }
+        .card {
+            flex: 1;
+            background: #f4f4f4;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .info-box, .features-list {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            line-height: 1.5;
+        }
+        .info-box {
+            white-space: pre-line;
+        }
+        .info-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>GEMMStore</h1>
+    <h2><strong>WebGPU Backend Descriptor</strong></h2>
+    <hr>
+    <div class="container">
+        <div class="card">
+            <div class="info-title">Device Information</div>
+            <div class="info-box" id="gpuInfo">Detecting...</div>
+        </div>
+        <div class="card">
+            <div class="info-title">Supported Features:</div>
+            <div class="features-list">
+                <div>FP32: <span id="fp32">✅</span></div>
+                <div>FP16: <span id="fp16">Detecting...</span></div>
+                <div>Vector Dot Product: <span id="vectorDot">Detecting...</span></div>
+                <div>4096x4096 MM: <span id="matrixSupport">✅</span></div>
+                <div>Workgroup Size (X, Y, Z): <span id="maxWorkgroupSize">Detecting...</span></div>
+                <div>Shared Memory: <span id="sharedMemorySize">Detecting...</span></div>
+            </div>
+        </div>
+    </div>
+
+<script>
+async function detectWebGPUInfo() {
+    const gpuInfoEl = document.getElementById("gpuInfo");
+    const fp16El = document.getElementById("fp16");
+    const vectorDotEl = document.getElementById("vectorDot");
+    const maxWorkgroupSizeEl = document.getElementById("maxWorkgroupSize");
+    const sharedMemorySizeEl = document.getElementById("sharedMemorySize");
+
+    if (!navigator.gpu) {
+        gpuInfoEl.textContent = "❌ WebGPU not supported!";
+        return;
+    }
+
+    try {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+            gpuInfoEl.textContent = "❌ No WebGPU adapter found.";
+            return;
+        }
+
+        const adapterInfo = adapter.info || {};
+
+        const gpuInfo = `
+Vendor: ${adapterInfo.vendor || "Unknown"}
+Architecture: ${adapterInfo.architecture || "Unknown"}
+Device: ${adapterInfo.device || "Unknown"}
+Description: ${adapterInfo.description || "Unknown"}
+Driver: ${adapterInfo.driver || "Unknown"}
+Backend: ${adapterInfo.description?.toLowerCase().includes("vulkan") ? "Vulkan" : "Unknown"}
+Type: ${adapterInfo.architecture?.toLowerCase().includes("integrated") ? "Integrated GPU" : "Discrete GPU"}
+        `.trim();
+        gpuInfoEl.textContent = gpuInfo;
+
+        const gpuDevice = await adapter.requestDevice();
+
+        document.getElementById("fp32").textContent = "✅";
+        fp16El.textContent = adapter.features.has("shader-f16") ? "✅" : "❌";
+
+        if (navigator.gpu.wgslLanguageFeatures) {
+            const wgslFeatures = [...navigator.gpu.wgslLanguageFeatures];
+            vectorDotEl.textContent = wgslFeatures.includes("packed_4x8_integer_dot_product") ? "✅" : "❌";
+        } else {
+            vectorDotEl.textContent = "❌";
+        }
+
+        // Get WebGPU Workgroup Limits
+        const limits = gpuDevice.limits;
+        const maxX = limits.maxComputeWorkgroupSizeX;
+        const maxY = limits.maxComputeWorkgroupSizeY;
+        const maxZ = limits.maxComputeWorkgroupSizeZ;
+
+        // Show as (X, Y, Z)
+        maxWorkgroupSizeEl.textContent = `(${maxX}, ${maxY}, ${maxZ})`;
+
+        // Compute max shared memory size (matrix size)
+        const maxSharedMemoryBytes = limits.maxComputeWorkgroupStorageSize;
+        const maxSharedMemoryElementsFP32 = Math.floor(maxSharedMemoryBytes / 4);
+        const sharedMatrixSize = Math.floor(Math.sqrt(maxSharedMemoryElementsFP32));
+        sharedMemorySizeEl.textContent = `${sharedMatrixSize}x${sharedMatrixSize} (FP32 elements)`;
+
+    } catch (error) {
+        gpuInfoEl.textContent = "❌ Error detecting WebGPU Info!";
+        console.error("WebGPU Detection Error:", error);
+    }
+}
+
+detectWebGPUInfo();
+</script>
+
+</body>
+</html>
+
