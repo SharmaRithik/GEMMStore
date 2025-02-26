@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GEMMStore Shader Analyzer</title>
+  <!-- Link to external CSS file -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="code-panel">
+      <div class="code-header">
+        <h2>GEMMStore</h2>
+      </div>
+      <div class="code-actions">
+        <button id="load-example">Load Example</button>
+        <button id="clear-code">Clear</button>
+      </div>
+      <textarea id="shader-code" placeholder="Shader code will be loaded here..."></textarea>
+      <div id="status-container"></div>
+    </div>
+    <div class="info-panel">
+      <div class="info-section">
+        <h3>Matrix Configurations</h3>
+        <div class="matrix-sizes">
+          <div class="matrix-size-label">Select Matrix Dimensions:</div>
+          <div class="checkbox-group" id="matrix-sizes">
+            <div class="checkbox-item active" data-size="512">
+              <input type="checkbox" id="size-512" checked>
+              <label for="size-512">512</label>
+            </div>
+            <div class="checkbox-item active" data-size="1024">
+              <input type="checkbox" id="size-1024" checked>
+              <label for="size-1024">1024</label>
+            </div>
+            <div class="checkbox-item" data-size="2048">
+              <input type="checkbox" id="size-2048">
+              <label for="size-2048">2048</label>
+            </div>
+            <div class="checkbox-item" data-size="4096">
+              <input type="checkbox" id="size-4096">
+              <label for="size-4096">4096</label>
+            </div>
+          </div>
+          <button id="run-all-matrices" class="run-all-btn">
+            Run All Selected Configurations
+          </button>
+        </div>
+        <div id="matrix-configurations" class="matrix-container">
+          <!-- Matrix configurations will be generated here -->
+        </div>
+      </div>
+      <div class="info-section">
+        <h3>Performance Results</h3>
+        <div id="timing-results">
+          <p class="placeholder-text">
+            Run configurations to see performance results
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Link to external JavaScript file -->
+  <script src="script.js"></script>
+</body>
+</html>
+
