@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Matrix Multiplication - Stability Range Analysis</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .result { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
+        .error { color: red; }
+        .success { color: green; }
+        canvas { display: none; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th { background-color: #f5f5f5; }
+    </style>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <h1>Matrix Multiplication - Stability Range Analysis</h1>
+    <div style="background: #fff3cd; padding: 10px; margin: 10px 0;">
+        <strong>Analysis Purpose:</strong><br>
+        - Find iteration count where GFLOPs stabilize within 5% range<br>
+        - Matrix size: 1024x1024<br>
+        - Workgroup size: 32x8 (256 threads)<br>
+        - 16 warmup runs before measurements
+    </div>
+    <canvas id="webgpu-canvas"></canvas>
+    <div id="status">Initializing WebGPU...</div>
+    <div id="results"></div>
+
+    <script type="module">
+        // Configuration
+        const MATRIX_SIZE = 1024;
+        const NUM_WARMUP_RUNS = 16;
+        const MEASUREMENT_SETS = 5;  // Number of complete measurement sets
+        const TARGET_RANGE_PERCENT = 5.0;  // Target stability range
+        const ITERATION_COUNTS = [128, 144, 160, 176, 192, 208, 224, 240, 256];  // More granular steps
+
+        // WGSL shader code
+        function getShaderCode(threadsX, threadsY) {
+            return `
+                struct Matrix {
+                    data: array<f32>,
+                }
+                @group(0) @binding(0) var<storage, read> matrixA: Matrix;
+                @group(0) @binding(1) var<storage, read> matrixB: Matrix;
+                @group(0) @binding(2) var<storage, read_write> matrixC: Matrix;
+
+                @compute @workgroup_size(${threadsX}, ${threadsY})
+                fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let i = id.y;
+                    let j = id.x;
+
+                    var value = 0.0;
+                    for (var k = 0u; k < ${MATRIX_SIZE}u; k = k + 1u) {
+                        value = value + matrixA.data[i * ${MATRIX_SIZE}u + k] * matrixB.data[k * ${MATRIX_SIZE}u + j];
+                    }
+                    matrixC.data[i * ${MATRIX_SIZE}u + j] = value;
+                }
+            `;
+        }
+
+        // Initialize WebGPU
+        async function initWebGPU() {
+            if (!navigator.gpu) throw new Error('WebGPU not supported');
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) throw new Error('No GPU adapter found');
+            const device = await adapter.requestDevice();
+            
+            const canvas = document.getElementById('webgpu-canvas');
+            const context = canvas.getContext('webgpu');
+            const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+            context.configure({
+                device: device,
+                format: canvasFormat,
+                alphaMode: 'premultiplied',
+            });
+
+            const matrixSize = MATRIX_SIZE * MATRIX_SIZE;
+            const bufferSize = matrixSize * 4;
+
+            const matrixABuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+
+            const matrixBBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+
+            const matrixCBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+
+            const stagingBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            return { device, matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer };
+        }
+
+        // Generate random matrix
+        function generateRandomMatrix(size) {
+            const matrix = new Float32Array(size * size);
+            for (let i = 0; i < matrix.length; i++) {
+                matrix[i] = Math.random() * 2 - 1;
+            }
+            return matrix;
+        }
+
+        // Calculate GFLOPs
+        function calculateGFLOPs(executionTimeMs) {
+            const operations = 2 * MATRIX_SIZE * MATRIX_SIZE * MATRIX_SIZE;
+            return (operations / (executionTimeMs / 1000)) / 1e9;
+        }
+
+        // Run single measurement
+        async function runMeasurement(device, buffers) {
+            const { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer } = buffers;
+            
+            const shaderModule = device.createShaderModule({
+                code: getShaderCode(32, 8)
+            });
+
+            const pipeline = device.createComputePipeline({
+                layout: 'auto',
+                compute: {
+                    module: shaderModule,
+                    entryPoint: 'main'
+                }
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: { buffer: matrixABuffer } },
+                    { binding: 1, resource: { buffer: matrixBBuffer } },
+                    { binding: 2, resource: { buffer: matrixCBuffer } }
+                ]
+            });
+
+            const startTime = performance.now();
+
+            const commandEncoder = device.createCommandEncoder();
+            const computePass = commandEncoder.beginComputePass();
+            computePass.setPipeline(pipeline);
+            computePass.setBindGroup(0, bindGroup);
+            computePass.dispatchWorkgroups(MATRIX_SIZE / 32, MATRIX_SIZE / 8);
+            computePass.end();
+
+            commandEncoder.copyBufferToBuffer(
+                matrixCBuffer, 0,
+                stagingBuffer, 0,
+                MATRIX_SIZE * MATRIX_SIZE * 4
+            );
+
+            device.queue.submit([commandEncoder.finish()]);
+
+            await stagingBuffer.mapAsync(GPUMapMode.READ);
+            stagingBuffer.unmap();
+
+            const endTime = performance.now();
+            return endTime - startTime;
+        }
+
+        // Calculate statistics
+        function calculateStats(data) {
+            const mean = data.reduce((a, b) => a + b) / data.length;
+            const stdDev = Math.sqrt(data.reduce((sq, x) => sq + Math.pow(x - mean, 2), 0) / (data.length - 1));
+            return {
+                mean,
+                stdDev,
+                cv: (stdDev / mean) * 100,
+                min: Math.min(...data),
+                max: Math.max(...data),
+                range: ((Math.max(...data) - Math.min(...data)) / mean) * 100
+            };
+        }
+
+        // Main execution
+        async function run() {
+            try {
+                const gpu = await initWebGPU();
+                const { device, matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer } = gpu;
+
+                const matrixA = generateRandomMatrix(MATRIX_SIZE);
+                const matrixB = generateRandomMatrix(MATRIX_SIZE);
+                device.queue.writeBuffer(matrixABuffer, 0, matrixA);
+                device.queue.writeBuffer(matrixBBuffer, 0, matrixB);
+
+                const resultsDiv = document.getElementById('results');
+                const statusDiv = document.getElementById('status');
+
+                // Create results table
+                const table = document.createElement('table');
+                table.innerHTML = `
+                    <tr>
+                        <th>Iterations</th>
+                        <th>Avg Time (ms)</th>
+                        <th>Avg GFLOPs</th>
+                        <th>GFLOPs Range (%)</th>
+                        <th>Status</th>
+                    </tr>
+                `;
+                resultsDiv.appendChild(table);
+
+                // Perform warmup runs
+                statusDiv.innerHTML = 'Performing warmup runs...';
+                for (let i = 0; i < NUM_WARMUP_RUNS; i++) {
+                    await runMeasurement(device, { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer });
+                }
+
+                let previousGFLOPs = 0;
+                let stableIterationFound = false;
+
+                // Test each iteration count
+                for (const numIterations of ITERATION_COUNTS) {
+                    statusDiv.innerHTML = `Testing ${numIterations} iterations...`;
+                    
+                    const allGflops = [];
+                    
+                    // Multiple measurement sets
+                    for (let set = 0; set < MEASUREMENT_SETS; set++) {
+                        const setTimes = [];
+                        for (let i = 0; i < numIterations; i++) {
+                            const executionTime = await runMeasurement(device, { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer });
+                            setTimes.push(executionTime);
+                        }
+                        const avgTime = setTimes.reduce((a, b) => a + b) / setTimes.length;
+                        allGflops.push(calculateGFLOPs(avgTime));
+                    }
+
+                    const timeStats = calculateStats(allGflops.map(gflops => (2 * MATRIX_SIZE * MATRIX_SIZE * MATRIX_SIZE) / (gflops * 1e9) * 1000));
+                    const gflopsStats = calculateStats(allGflops);
+
+                    const row = document.createElement('tr');
+                    const percentDiff = previousGFLOPs ? Math.abs((gflopsStats.mean - previousGFLOPs) / previousGFLOPs * 100) : 0;
+                    
+                    const isStable = gflopsStats.range <= TARGET_RANGE_PERCENT && 
+                                   (previousGFLOPs === 0 || percentDiff <= TARGET_RANGE_PERCENT);
+
+                    if (isStable && !stableIterationFound) {
+                        stableIterationFound = true;
+                        row.style.backgroundColor = '#e6ffe6';
+                    }
+
+                    row.innerHTML = `
+                        <td>${numIterations}</td>
+                        <td>${timeStats.mean.toFixed(2)}</td>
+                        <td>${gflopsStats.mean.toFixed(2)}</td>
+                        <td>${gflopsStats.range.toFixed(2)}%</td>
+                        <td>${isStable ? '<span class="success">STABLE</span>' : 
+                            (previousGFLOPs ? `Diff from prev: ${percentDiff.toFixed(2)}%` : '-')}</td>
+                    `;
+                    table.appendChild(row);
+
+                    previousGFLOPs = gflopsStats.mean;
+                }
+
+                statusDiv.innerHTML = 'Analysis complete!';
+
+            } catch (error) {
+                document.getElementById('status').innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        // Start the analysis
+        run();
+    </script>
+</body>
+</html> 

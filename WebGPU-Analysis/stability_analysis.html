@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Matrix Multiplication - Stability Analysis</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .error { color: red; font-weight: bold; }
+        .success { color: green; font-weight: bold; }
+        canvas { display: none; }
+        .note {
+            background-color: #fff3cd;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th { background-color: #f5f5f5; }
+        .chart-container {
+            margin: 20px 0;
+            height: 400px;
+        }
+    </style>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <h1>Matrix Multiplication - Stability Analysis</h1>
+    <div class="note">
+        <strong>Analysis Method:</strong><br>
+        - Run 10 separate sets of measurements for each iteration count<br>
+        - Each set performs the specified number of iterations<br>
+        - Compare averages between sets to determine stability<br>
+        - Calculate confidence intervals for performance metrics
+    </div>
+    <canvas id="webgpu-canvas"></canvas>
+    <div id="status">Initializing WebGPU...</div>
+    <div id="summary"></div>
+    <div id="results"></div>
+    <div id="charts"></div>
+
+    <script type="module">
+        // Configuration
+        const MATRIX_SIZE = 1024;
+        const ITERATION_COUNTS = [256];  // Focus only on 256 iterations
+        const NUM_MEASUREMENT_SETS = 50;  // Increased from 10 to 50 sets
+        const NUM_WARMUP_RUNS = 16;
+        const CONFIDENCE_LEVEL = 0.95;
+
+        // WGSL shader code
+        function getShaderCode(threadsX, threadsY) {
+            return `
+                struct Matrix {
+                    data: array<f32>,
+                }
+                @group(0) @binding(0) var<storage, read> matrixA: Matrix;
+                @group(0) @binding(1) var<storage, read> matrixB: Matrix;
+                @group(0) @binding(2) var<storage, read_write> matrixC: Matrix;
+
+                @compute @workgroup_size(${threadsX}, ${threadsY})
+                fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let i = id.y;
+                    let j = id.x;
+
+                    var value = 0.0;
+                    for (var k = 0u; k < ${MATRIX_SIZE}u; k = k + 1u) {
+                        value = value + matrixA.data[i * ${MATRIX_SIZE}u + k] * matrixB.data[k * ${MATRIX_SIZE}u + j];
+                    }
+                    matrixC.data[i * ${MATRIX_SIZE}u + j] = value;
+                }
+            `;
+        }
+
+        // Initialize WebGPU
+        async function initWebGPU() {
+            if (!navigator.gpu) throw new Error('WebGPU not supported');
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) throw new Error('No GPU adapter found');
+            const device = await adapter.requestDevice();
+            
+            const canvas = document.getElementById('webgpu-canvas');
+            const context = canvas.getContext('webgpu');
+            const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+            context.configure({
+                device: device,
+                format: canvasFormat,
+                alphaMode: 'premultiplied',
+            });
+
+            const matrixSize = MATRIX_SIZE * MATRIX_SIZE;
+            const bufferSize = matrixSize * 4;
+
+            const matrixABuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+
+            const matrixBBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+
+            const matrixCBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+
+            const stagingBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            return { device, matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer };
+        }
+
+        // Generate random matrix
+        function generateRandomMatrix(size) {
+            const matrix = new Float32Array(size * size);
+            for (let i = 0; i < matrix.length; i++) {
+                matrix[i] = Math.random() * 2 - 1;
+            }
+            return matrix;
+        }
+
+        // Calculate GFLOPs
+        function calculateGFLOPs(executionTimeMs) {
+            const operations = 2 * MATRIX_SIZE * MATRIX_SIZE * MATRIX_SIZE;
+            return (operations / (executionTimeMs / 1000)) / 1e9;
+        }
+
+        // Run single measurement
+        async function runMeasurement(device, buffers) {
+            const { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer } = buffers;
+            
+            const shaderModule = device.createShaderModule({
+                code: getShaderCode(32, 8)
+            });
+
+            const pipeline = device.createComputePipeline({
+                layout: 'auto',
+                compute: {
+                    module: shaderModule,
+                    entryPoint: 'main'
+                }
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: { buffer: matrixABuffer } },
+                    { binding: 1, resource: { buffer: matrixBBuffer } },
+                    { binding: 2, resource: { buffer: matrixCBuffer } }
+                ]
+            });
+
+            const startTime = performance.now();
+
+            const commandEncoder = device.createCommandEncoder();
+            const computePass = commandEncoder.beginComputePass();
+            computePass.setPipeline(pipeline);
+            computePass.setBindGroup(0, bindGroup);
+            computePass.dispatchWorkgroups(MATRIX_SIZE / 32, MATRIX_SIZE / 8);
+            computePass.end();
+
+            commandEncoder.copyBufferToBuffer(
+                matrixCBuffer, 0,
+                stagingBuffer, 0,
+                MATRIX_SIZE * MATRIX_SIZE * 4
+            );
+
+            device.queue.submit([commandEncoder.finish()]);
+
+            await stagingBuffer.mapAsync(GPUMapMode.READ);
+            stagingBuffer.unmap();
+
+            const endTime = performance.now();
+            return endTime - startTime;
+        }
+
+        // Calculate statistics
+        function calculateStats(data) {
+            const n = data.length;
+            const mean = data.reduce((a, b) => a + b) / n;
+            const sortedData = [...data].sort((a, b) => a - b);
+            const median = n % 2 === 0 
+                ? (sortedData[n/2 - 1] + sortedData[n/2]) / 2 
+                : sortedData[Math.floor(n/2)];
+            
+            const stdDev = Math.sqrt(data.reduce((sq, x) => sq + Math.pow(x - mean, 2), 0) / (n - 1));
+            const marginOfError = (1.96 * stdDev) / Math.sqrt(n);
+            
+            // Calculate quartiles
+            const q1 = sortedData[Math.floor(n * 0.25)];
+            const q3 = sortedData[Math.floor(n * 0.75)];
+            const iqr = q3 - q1;
+            
+            // Identify outliers
+            const lowerBound = q1 - 1.5 * iqr;
+            const upperBound = q3 + 1.5 * iqr;
+            const outliers = data.filter(x => x < lowerBound || x > upperBound);
+            
+            return {
+                mean,
+                median,
+                stdDev,
+                relativeError: (marginOfError / mean) * 100,
+                min: Math.min(...data),
+                max: Math.max(...data),
+                q1,
+                q3,
+                iqr,
+                outliers: outliers.length,
+                cv: (stdDev / mean) * 100  // Coefficient of variation
+            };
+        }
+
+        // Create detailed statistics table
+        function createStatsTable(timeData, gflopsData) {
+            const table = document.createElement('table');
+            table.innerHTML = `
+                <tr>
+                    <th>Metric</th>
+                    <th>Time (ms)</th>
+                    <th>GFLOPs</th>
+                </tr>
+                <tr>
+                    <td>Mean</td>
+                    <td>${timeData.mean.toFixed(2)}</td>
+                    <td>${gflopsData.mean.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Median</td>
+                    <td>${timeData.median.toFixed(2)}</td>
+                    <td>${gflopsData.median.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Std Dev</td>
+                    <td>${timeData.stdDev.toFixed(2)}</td>
+                    <td>${gflopsData.stdDev.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>CV (%)</td>
+                    <td>${timeData.cv.toFixed(2)}</td>
+                    <td>${gflopsData.cv.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Min</td>
+                    <td>${timeData.min.toFixed(2)}</td>
+                    <td>${gflopsData.min.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Max</td>
+                    <td>${timeData.max.toFixed(2)}</td>
+                    <td>${gflopsData.max.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Q1</td>
+                    <td>${timeData.q1.toFixed(2)}</td>
+                    <td>${gflopsData.q1.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Q3</td>
+                    <td>${timeData.q3.toFixed(2)}</td>
+                    <td>${gflopsData.q3.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>IQR</td>
+                    <td>${timeData.iqr.toFixed(2)}</td>
+                    <td>${gflopsData.iqr.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Outliers</td>
+                    <td>${timeData.outliers}</td>
+                    <td>${gflopsData.outliers}</td>
+                </tr>
+            `;
+            return table;
+        }
+
+        // Create histogram plot
+        function createHistogramPlot(timeData, gflopsData) {
+            const traces = [
+                {
+                    x: timeData,
+                    type: 'histogram',
+                    name: 'Execution Time (ms)',
+                    opacity: 0.75,
+                    xbins: {
+                        size: (Math.max(...timeData) - Math.min(...timeData)) / 20
+                    }
+                },
+                {
+                    x: gflopsData,
+                    type: 'histogram',
+                    name: 'GFLOPs',
+                    opacity: 0.75,
+                    xbins: {
+                        size: (Math.max(...gflopsData) - Math.min(...gflopsData)) / 20
+                    },
+                    yaxis: 'y2'
+                }
+            ];
+
+            const layout = {
+                title: 'Distribution of Performance Measurements',
+                xaxis: { title: 'Value' },
+                yaxis: { title: 'Count' },
+                yaxis2: {
+                    title: 'Count',
+                    overlaying: 'y',
+                    side: 'right'
+                },
+                barmode: 'overlay',
+                showlegend: true,
+                height: 400
+            };
+
+            Plotly.newPlot('histogram', traces, layout);
+        }
+
+        // Main execution
+        async function run() {
+            try {
+                const gpu = await initWebGPU();
+                const { device, matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer } = gpu;
+
+                // Initialize matrices
+                const matrixA = generateRandomMatrix(MATRIX_SIZE);
+                const matrixB = generateRandomMatrix(MATRIX_SIZE);
+                device.queue.writeBuffer(matrixABuffer, 0, matrixA);
+                device.queue.writeBuffer(matrixBBuffer, 0, matrixB);
+
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = '<div id="histogram"></div>';
+                const statusDiv = document.getElementById('status');
+
+                // Perform initial warmup runs
+                statusDiv.innerHTML = 'Performing initial warmup runs...';
+                for (let i = 0; i < NUM_WARMUP_RUNS; i++) {
+                    await runMeasurement(device, { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer });
+                }
+
+                // Collect all measurements
+                const allTimes = [];
+                const allGflops = [];
+                
+                for (let set = 0; set < NUM_MEASUREMENT_SETS; set++) {
+                    statusDiv.innerHTML = `Running measurement set ${set + 1}/${NUM_MEASUREMENT_SETS}...`;
+                    
+                    for (let i = 0; i < 256; i++) {
+                        const executionTime = await runMeasurement(device, { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer });
+                        allTimes.push(executionTime);
+                        allGflops.push(calculateGFLOPs(executionTime));
+                    }
+                }
+
+                // Calculate detailed statistics
+                const timeStats = calculateStats(allTimes);
+                const gflopsStats = calculateStats(allGflops);
+
+                // Create statistics table
+                const statsTable = createStatsTable(timeStats, gflopsStats);
+                resultsDiv.appendChild(statsTable);
+
+                // Create histogram
+                createHistogramPlot(allTimes, allGflops);
+
+                statusDiv.innerHTML = `Analysis complete!<br>
+                    Total measurements: ${allTimes.length}<br>
+                    Average Time: ${timeStats.mean.toFixed(2)} ms (CV: ${timeStats.cv.toFixed(2)}%)<br>
+                    Average GFLOPs: ${gflopsStats.mean.toFixed(2)} (CV: ${gflopsStats.cv.toFixed(2)}%)`;
+
+            } catch (error) {
+                document.getElementById('status').innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        // Start the analysis
+        run();
+    </script>
+</body>
+</html> 
